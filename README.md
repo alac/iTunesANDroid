@@ -1,6 +1,11 @@
 iTunesANDroid
 =================
 
+Disclaimers
+-----------------
+- iTunes and Android are owned by Apple and Google Inc, respectively. Neither has anything to do with this script.
+- This project uses a heavily modified version of [adb-sync](https://github.com/google/adb-sync), which is under the Apache License.
+
 Purpose
 -----------------
 - Export iTunes playlists to an Android device as m3u8 playlist files (usable with Poweramp).
@@ -24,8 +29,3 @@ Usage
 - Edit line 42 of [iTunesAndroidDriver.py](https://github.com/alac/iTunesANDroid/blob/master/iTunesAndroidDriver.py#L42) to be the location of your iTunes folder.
 - Run iTunesAndroidDriver.py.
 - Wait for it to finish!
-
-
-Disclaimers
------------------
-- This project uses a heavily modified version of [adb-sync](https://github.com/google/adb-sync), which is under the Apache License.
