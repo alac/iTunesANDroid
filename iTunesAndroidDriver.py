@@ -12,7 +12,7 @@ Plan:
 import codecs
 codecs.register(lambda name: codecs.lookup('utf-8') if name == 'cp65001' else None)
 
-import os, subprocess, time
+import os, subprocess, time, sys
 
 class ProcessTimer:
     def __init__(self):
@@ -43,9 +43,17 @@ class Locations:
     iTunes_music_folder = os.path.join(iTunes_root_folder, "iTunes Media", "Music")
     iTunes_m3u8_Folder = os.path.join(iTunes_root_folder, "iTunes Media", "Playlists")
     iTunes_library_xml = os.path.join(iTunes_root_folder, "iTunes Library.xml")
+    android_playlist_folder = "sdcard/Playlists"
+    android_music_folder = "sdcard/Music"
 
 if __name__ == "__main__":
+    overall_timer = ProcessTimer()
+    overall_timer.start("iTunesAndroidDriver")
     timer = ProcessTimer()
+
+    if sys.platform == 'win32':
+        if sys.stdout.encoding != 'cp65001':
+            os.system("chcp 65001")
 
     timer.run(
         "iTunesXML -> m3u8 playlists",
@@ -56,3 +64,28 @@ if __name__ == "__main__":
         Locations.iTunes_m3u8_Folder,
         ]
     )
+
+    timer.run(
+        "playlists -> android",
+        [
+        'py',
+        '-3',
+        "adb-sync\\adb-sync",
+        Locations.iTunes_m3u8_Folder,
+        Locations.android_playlist_folder,
+        ]
+    )
+
+    timer.run(
+        "music -> android",
+        [
+        'py',
+        '-3',
+        "adb-sync\\adb-sync",
+        "-d",
+        Locations.iTunes_music_folder,
+        Locations.android_music_folder,
+        ]
+    )
+
+    overall_timer.finish()
