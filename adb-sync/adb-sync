@@ -1,5 +1,20 @@
 #!/usr/bin/python
 
+# adb-sync has been heavily modified by Alan Lac.
+#
+# It's entirely possible that for your purposes the original
+# version of this, as published by Google Inc. may be better
+# for your needs. Source: https://github.com/google/adb-sync
+#
+# That said, this version of adb-sync has the following:
+# - Support for unicode filenames in both source and destination paths.
+#
+# Restrictions:
+# - Only verified to work with Python3, Windows 10, and Powershell
+# with the codepage set to 65001 (run 'chcp 65001' prior to this script).
+# - This version of the script no longer supports wildcards in the
+# input paths.
+
 # Copyright 2014 Google Inc. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,10 +48,9 @@ def _sprintf(s, *args):
     # unicode strings; however, we must do so in a way that preserves all
     # bytes, and convert back at the end. An encoding that maps all byte
     # values to different Unicode codepoints is cp437.
-    return (s.decode('cp437') % tuple([
-        (x.decode('cp437') if type(x) == bytes else x) for x in args
-    ])).encode('cp437')
-
+    converted = [(x.decode('cp437') if type(x) == bytes else x) for x in args]
+    out = (s.decode('cp437') % tuple(converted)).encode('cp437')
+    return out
 
 def _print(s, *args):
     """Writes a binary string to stdout.
@@ -47,8 +61,9 @@ def _print(s, *args):
     """
     if hasattr(sys.stdout, 'buffer'):
         # Python 3.
-        sys.stdout.buffer.write(_sprintf(s, *args) + b'\n')
-        sys.stdout.buffer.flush()
+        print(_sprintf(s, *args))
+        # sys.stdout.buffer.write(_sprintf(s, *args) + b'\n')
+        # sys.stdout.buffer.flush()
     else:
         # Python 2.
         sys.stdout.write(_sprintf(s, *args) + b'\n')
@@ -179,7 +194,33 @@ class AdbFileSystem(object):
           raise OSError('Subprocess exited with nonzero status.')
         return False
 
-    return Stdout(subprocess.Popen(*popen_args, stdout=subprocess.PIPE))
+    args_str = b' '.join([b' '.join(x) for x in popen_args])
+    # _print(b'Popen: ' + args_str)
+    # _print(b'>>Raw: ' + args_str.decode(sys.stdout.encoding).encode('raw_unicode_escape'))
+
+    new_args = []
+    for element in popen_args:
+      new_list = [s.decode(sys.stdout.encoding) for s in element]
+      new_args.append(new_list)
+
+    return Stdout(subprocess.Popen(*new_args, stdout=subprocess.PIPE))
+
+  def Call(self, *call_args):
+    new_args = []
+    for element in call_args:
+      new_list = []
+      new_args.append(new_list)
+      for s in element:
+        if type(s) == bytes:
+          try:
+            new_list.append(s.decode('utf-8'))
+          except:
+            raise
+        else:
+          new_list.append(s)
+
+    return subprocess.run(new_list).returncode
+
 
   def QuoteArgument(self, arg):
     # Quotes an argument for use by adb shell.
@@ -199,9 +240,11 @@ class AdbFileSystem(object):
     # while echo does its own backslash escape handling additionally to the
     # shell's. Too bad printf "%s\n" is not available.
     test_strings = [
-        b'(',
-        b'(;  #`ls`$PATH\'"(\\\\\\\\){};!\xc0\xaf\xff\xc2\xbf'
+        u'(',
+        u'(;  #`ls`$PATH\'"(\\\\\\\\){};!\xc0\xaf\xff\xc2\xbf'
     ]
+    test_strings = [s.encode("utf-8") for s in test_strings]
+
     for test_string in test_strings:
       good = False
       with self.Stdout(self.adb + [b'shell', _sprintf(b'date +%s',
@@ -216,6 +259,9 @@ class AdbFileSystem(object):
 
   def listdir(self, path):  # os's name, so pylint: disable=g-bad-name
     """List the contents of a directory, caching them for later lstat calls."""
+    if type(path) is str:
+      path = path.encode("utf-8")
+
     with self.Stdout(self.adb + [b'shell', _sprintf(b'ls -al %s',
                       self.QuoteArgument(path + b'/'))]) as stdout:
       for line in stdout:
@@ -230,10 +276,13 @@ class AdbFileSystem(object):
           _print(b'Warning: could not parse %s', line)
         else:
           self.stat_cache[path + b'/' + filename] = statdata
-          yield filename
+          yield filename.decode("utf-8")
 
   def lstat(self, path):  # os's name, so pylint: disable=g-bad-name
     """Stat a file."""
+    if type(path) is str:
+      path = path.encode("utf-8")
+
     if path in self.stat_cache:
       return self.stat_cache[path]
     with self.Stdout(self.adb + [b'shell', _sprintf(b'ls -ald %s',
@@ -249,19 +298,19 @@ class AdbFileSystem(object):
 
   def unlink(self, path):  # os's name, so pylint: disable=g-bad-name
     """Delete a file."""
-    if subprocess.call(self.adb + [b'shell', _sprintf(b'rm %s',
+    if self.Call(self.adb + [b'shell', _sprintf(b'rm %s',
                                    self.QuoteArgument(path))]) != 0:
       raise OSError('unlink failed')
 
   def rmdir(self, path):  # os's name, so pylint: disable=g-bad-name
     """Delete a directory."""
-    if subprocess.call(self.adb + [b'shell', _sprintf(b'rmdir %s',
+    if self.Call(self.adb + [b'shell', _sprintf(b'rmdir %s',
                                    self.QuoteArgument(path))]) != 0:
       raise OSError('rmdir failed')
 
   def makedirs(self, path):  # os's name, so pylint: disable=g-bad-name
     """Create a directory."""
-    if subprocess.call(self.adb + [b'shell', _sprintf(b'mkdir -p %s',
+    if self.Call(self.adb + [b'shell', _sprintf(b'mkdir -p %s',
                                    self.QuoteArgument(path))]) != 0:
       raise OSError('mkdir failed')
 
@@ -270,11 +319,11 @@ class AdbFileSystem(object):
     """Set the time of a file to a specified unix time."""
     atime, mtime = times
     timestr = time.strftime(b'%Y%m%d.%H%M%S', time.localtime(mtime))
-    if subprocess.call(self.adb + [b'shell', _sprintf(b'touch -mt %s %s',
+    if self.Call(self.adb + [b'shell', _sprintf(b'touch -mt %s %s',
                                    timestr, self.QuoteArgument(path))]) != 0:
       raise OSError('touch failed')
     timestr = time.strftime(b'%Y%m%d.%H%M%S', time.localtime(atime))
-    if subprocess.call(self.adb + [b'shell',_sprintf( b'touch -at %s %s',
+    if self.Call(self.adb + [b'shell',_sprintf( b'touch -at %s %s',
                                    timestr, self.QuoteArgument(path))]) != 0:
       raise OSError('touch failed')
 
@@ -287,12 +336,12 @@ class AdbFileSystem(object):
 
   def Push(self, src, dst):
     """Push a file from the local file system to the Android device."""
-    if subprocess.call(self.adb + [b'push', src, dst]) != 0:
+    if self.Call(self.adb + [b'push', src, dst]) != 0:
       raise OSError('push failed')
 
   def Pull(self, src, dst):
     """Pull a file from the Android device to the local file system."""
-    if subprocess.call(self.adb + [b'pull', src, dst]) != 0:
+    if self.Call(self.adb + [b'pull', src, dst]) != 0:
       raise OSError('pull failed')
 
 
@@ -309,20 +358,25 @@ def BuildFileList(fs, path, prefix=b''):
     Directories are yielded before their contents.
   """
   try:
-    statresult = fs.lstat(path)
+    alt_path = path.decode("utf-8")
+    statresult = fs.lstat(alt_path)
   except OSError:
     return
   if stat.S_ISDIR(statresult.st_mode):
     yield prefix, statresult
     try:
-      files = list(fs.listdir(path))
+      files = list(fs.listdir(path.decode("utf-8")))
+      files = [s.encode("utf-8") for s in files]
     except OSError:
       return
     files.sort()
     for n in files:
       if n == b'.' or n == b'..':
         continue
+      # print("recurse on %r" % n)
       for t in BuildFileList(fs, path + b'/' + n, prefix + b'/' + n):
+        # print(">BuildFileList")
+        # print(t)
         yield t
   elif stat.S_ISREG(statresult.st_mode):
     yield prefix, statresult
@@ -430,6 +484,20 @@ class FileSyncer(object):
     remotelist = BuildFileList(self.adb, self.remote)
     self.local_only, self.both, self.remote_only = DiffLists(locallist,
                                                              remotelist)
+
+    def print_files(tuple_list):
+      for i, t in enumerate(tuple_list):
+        print("  %d: %s" % (i, t[0].decode("utf-8")))
+
+    print(">local_only")
+    print_files(self.local_only)
+
+    print(">both")
+    print_files(self.both)
+
+    print(">remote_only")
+    print_files(self.remote_only)
+
     if not self.local_only and not self.both and not self.remote_only:
       _print(b'No files seen. User error?')
     self.src_to_dst = (self.local_to_remote, self.remote_to_local)
@@ -572,7 +640,9 @@ class FileSyncer(object):
     for i in [0, 1]:
       if self.src_to_dst[i]:
         for name, s in self.src_only[i]:
-          src_name = self.src[i] + name
+          _print(b'Copying: %s', name)
+          src_name = self.src[i] + name.replace(b'/',b'\\')
+          src_name = src_name.replace(b'\\\\',b'\\')
           dst_name = self.dst[i] + name
           _print(b'%s: %s', self.push[i], dst_name)
           if stat.S_ISDIR(s.st_mode):
@@ -707,20 +777,8 @@ def main(*args):
     adb += [b'-P', args.port.encode(args_encoding)]
   adb = AdbFileSystem(adb)
 
-  # Expand wildcards.
-  localpaths = []
-  remotepaths = []
-  if args.reverse:
-    for pattern in localpatterns:
-      for src in ExpandWildcards(adb, pattern):
-        src, dst = FixPath(src, remotepath)
-        localpaths.append(src)
-        remotepaths.append(dst)
-  else:
-    for src in localpatterns:
-      src, dst = FixPath(src, remotepath)
-      localpaths.append(src)
-      remotepaths.append(dst)
+  localpaths = localpatterns
+  remotepaths = [remotepath]
 
   preserve_times = False  # args.times
   delete_missing = args.delete
@@ -756,6 +814,7 @@ def main(*args):
 
   for i in range(len(localpaths)):
     _print(b'Sync: local %s, remote %s', localpaths[i], remotepaths[i])
+    _print(b'-------------------')
     syncer = FileSyncer(adb, localpaths[i], remotepaths[i],
                         local_to_remote, remote_to_local, preserve_times,
                         delete_missing, allow_overwrite, allow_replace, dry_run)
